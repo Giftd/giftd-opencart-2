@@ -191,6 +191,16 @@
             //--></script>]]></add>
         </operation>
     </file>
+	<file path="catalog/view/theme/barbaratheme/template/common/header.tpl">
+        <operation>
+            <search><![CDATA[<body class="<?php echo $class; ?> nofix">]]></search>
+            <add position="after"><![CDATA[<script type="text/javascript"><!--
+            <?php echo htmlspecialchars_decode($giftd_js_code) ?>
+            //--></script>]]></add>
+        </operation>
+    </file>
+	
+	
     <file path="catalog/view/theme/*/template/checkout/simplecheckout_cart.tpl" >
         <operation >
             <search ><![CDATA[<?php if (isset($modules['coupon'])) { ?>]]></search>
@@ -249,18 +259,18 @@
                     );
 
                     if(!$min_total){
-                        $this->model_total_voucher->add_giftd_vaucher($data, $this->request->post['amount_total']);
+                        $this->model_extension_total_voucher->add_giftd_vaucher($data, $this->request->post['amount_total']);
                     }elseif($min_total <= $this->request->post['amount_total']){
                         if(!$discount){
-                            $this->model_total_voucher->add_giftd_vaucher($data, $this->request->post['amount_total']); 
+                            $this->model_extension_total_voucher->add_giftd_vaucher($data, $this->request->post['amount_total']); 
                         }elseif($discount && !$this->request->post['discount_in_cart']){
-                            $this->model_total_voucher->add_giftd_vaucher($data, $this->request->post['amount_total']);
+                            $this->model_extension_total_voucher->add_giftd_vaucher($data, $this->request->post['amount_total']);
                         }
                     }else{
                        if(isset($this->request->post['voucher'])&& ($this->request->post['amount_total'] + $available) >= $min_total){
                         
                     }else{
-                        $this->model_total_voucher->remove_vaucher($this->request->post['voucher']);
+                        $this->model_extension_total_voucher->remove_vaucher($this->request->post['voucher']);
                 
                         unset($this->session->data['voucher']);
                     }
@@ -272,8 +282,11 @@
     <file path="catalog/controller/checkout/simplecheckout.php">
         <operation>
             <search ><![CDATA[$order_id = $this->order();]]></search>
-            <add position="after"><![CDATA[if(isset($this->session->data['voucher']) && $this->session->data['voucher'] && (empty($this->session->data['proverka']) || $this->session->data['proverka'] != $this->session->data['voucher']) ){
-                   
+            <add position="after"><![CDATA[
+			
+				if (isset($this->session->data['voucher']) && $this->session->data['voucher'] && (empty($this->session->data['proverka']) || $this->session->data['proverka'] != $this->session->data['voucher']) ) 
+				{
+					$this->log->write('session voucher');
                     $this->session->data['proverka'] = $this->session->data['voucher'];
                     $giftd_data = file_get_contents('http://api.giftd.ru/v1/gift/charge?token=' . $this->session->data['voucher'] . '&api_key=' . $this->config->get('giftd_api_key') . '&amount=' . $this->session->data['amount_available'] .'&amount_total=' . $this->session->data['amount_total'] . '&external_id=' . $order_id);
                     $giftd_data = json_decode($giftd_data);
@@ -292,7 +305,78 @@
 
                         $this->simplecheckout->redirect($this->url->link('checkout/simplecheckout','','SSL'));
                     }
-                }]]></add>
+                }
+				else if (isset($this->request->post['voucher']) && (strripos($this->request->post['voucher'], $this->config->get('giftd_prefix')) !== false))  { // cart and checkout is one page
+
+					$this->log->write('post voucher');
+
+					$this->load->model('extension/total/voucher');
+
+					$giftd_data = file_get_contents('http://api.giftd.ru/v1/gift/check?token=' . $this->request->post['voucher'] . '&api_key=' . $this->config->get('giftd_api_key'));
+					
+					$this->log->write($giftd_data);
+					$giftd_data = json_decode($giftd_data);
+            
+					if($giftd_data->type == 'data'){
+							$min_total = $giftd_data->data->min_amount_total;
+							$this->session->data['min_girtd_total'] = $min_total;
+							$discount  = $giftd_data->data->cannot_be_used_on_discounted_items;
+							$available = $giftd_data->data->amount_available;
+							
+							$data = array(
+								'code'=>$this->request->post['voucher'],
+								'from_name'=>'giftd',
+								'from_email'=>'partner@giftd.ru',
+								'to_name'=>'customer',
+								'to_email'=>'partner@giftd.ru',
+								'voucher_theme_id'=>8,
+								'message'=>'from giftd',
+								'amount'=>$available,
+							);
+
+							if(!$min_total){
+								$this->model_extension_total_voucher->add_giftd_vaucher($data, $this->request->post['amount_total']);
+							}elseif($min_total <= $this->request->post['amount_total']){
+								if(!$discount){
+									$this->model_extension_total_voucher->add_giftd_vaucher($data, $this->request->post['amount_total']); 
+								}elseif($discount && !$this->request->post['discount_in_cart']){
+									$this->model_extension_total_voucher->add_giftd_vaucher($data, $this->request->post['amount_total']);
+								}
+							}else{
+							   if(isset($this->request->post['voucher'])&& ($this->request->post['amount_total'] + $available) >= $min_total){
+								
+							}else{
+								$this->model_extension_total_voucher->remove_vaucher($this->request->post['voucher']);
+						
+								unset($this->session->data['voucher']);
+							}
+						}
+					}
+					
+					// and try again with session
+					
+					if (isset($this->session->data['voucher']) && $this->session->data['voucher'] && (empty($this->session->data['proverka']) || $this->session->data['proverka'] != $this->session->data['voucher']) ) 
+					{
+					
+						$this->session->data['proverka'] = $this->session->data['voucher'];
+						$giftd_data = file_get_contents('http://api.giftd.ru/v1/gift/charge?token=' . $this->session->data['voucher'] . '&api_key=' . $this->config->get('giftd_api_key') . '&amount=' . $this->session->data['amount_available'] .'&amount_total=' . $this->session->data['amount_total'] . '&external_id=' . $order_id);
+						$giftd_data = json_decode($giftd_data);
+					   
+						unset($this->session->data['amount_available']);
+						unset($this->session->data['amount_total']);
+					   
+						if($giftd_data->type == 'error'){
+							
+							$this->load->model('extension/total/voucher');
+							
+							unset($this->session->data['voucher']);
+							unset($this->session->data['proverka']);
+
+							$this->simplecheckout->redirect($this->url->link('checkout/simplecheckout','','SSL'));
+						}
+					}
+					
+				}]]></add>
         </operation>
     </file>
 </modification>
